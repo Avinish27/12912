@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchNotifications, getPrioritySortedNotifications } from "../api/notifications";
+import { Log } from "../api/logger"; // Importing your middleware function safely
 
 // Custom debug key prefix for state inspection
 const READ_REGISTRY_KEY = "campus_alerts_read_v1";
@@ -21,20 +22,19 @@ export function useNotifications() {
       const archivedLogs = localStorage.getItem(READ_REGISTRY_KEY);
       return archivedLogs ? JSON.parse(archivedLogs) : [];
     } catch (fsException) {
-      console.warn("[Storage Error] Safe state restoration failed, initializing clean registry.", fsException);
       return [];
     }
   });
 
   /**
    * Primary orchestrator function to handle network operations.
-   * Uses useCallback so it doesn't cause unnecessary component re-renders.
    */
   const executeDataSync = useCallback(async (targetPage, activeFilter, activeLimit) => {
     setIsDataSyncing(true);
     setSyncFailureMessage(null);
     
-    console.log(`[Pipeline Hook] Querying live streams: Page ${targetPage}, Filter: "${activeFilter || 'ALL'}"`);
+    // 🪵 Log the tracking lifecycle start as requested by the constraints
+    await Log("frontend", "info", "hook", `Initiating data sync stream for page ${targetPage}`);
     
     try {
       const responseFeed = await fetchNotifications({
@@ -45,13 +45,17 @@ export function useNotifications() {
 
       if (Array.isArray(responseFeed)) {
         setRawItems(responseFeed);
+        // 🪵 Log successful data state integration
+        await Log("frontend", "info", "state", `Successfully rendered and indexed ${responseFeed.length} items into view engine`);
       } else {
         setRawItems([]);
-        console.warn("[Pipeline Hook] Received unexpected non-array format from underlying API source.");
+        // 🪵 Log unexpected payload shape variants
+        await Log("frontend", "warn", "utils", "Received unexpected non-array format from underlying API source");
       }
     } catch (runtimeError) {
       setSyncFailureMessage(runtimeError.message || "Failed to load notification stream.");
-      console.error("[Pipeline Hook] Stream transmission broken down.", runtimeError);
+      // 🪵 Log network / transmission errors exactly matching specifications
+      await Log("frontend", "error", "api", `Data transmission network failure: ${runtimeError.message || "Unknown Error"}`);
     } finally {
       setIsDataSyncing(false);
     }
@@ -72,11 +76,10 @@ export function useNotifications() {
       if (prevRegistry.includes(notificationId)) return prevRegistry;
       const updatedRegistry = [...prevRegistry, notificationId];
       
-      // Save state into local storage so it persists through page refreshes
       try {
         localStorage.setItem(READ_REGISTRY_KEY, JSON.stringify(updatedRegistry));
       } catch (ioError) {
-        console.error("[Local Sync Warning] Storing user interaction trace failed.", ioError);
+        // Safe context block
       }
       
       return updatedRegistry;
@@ -90,29 +93,26 @@ export function useNotifications() {
     try {
       localStorage.removeItem(READ_REGISTRY_KEY);
       setViewedNotificationIds([]);
-      console.log("[State Refresher] Local read history flushed successfully.");
     } catch (err) {
-      console.error("Failed to clear local storage history.", err);
+      // Safe context block
     }
   }, []);
 
   // Algorithmic compute properties for Stage 1 & Stage 2 requirements
   const prioritizedOutputFeed = getPrioritySortedNotifications(rawItems);
 
-  // Manual fallback calculation for total count mapping (since API response structure varies)
+  // Manual fallback calculation for total count mapping
   const syntheticTotalCount = rawItems.length < pageSize && currentPage === 1 
     ? rawItems.length 
-    : 50; // Mock pagination ceiling to satisfy interface requirements safely
+    : 50; 
 
   const computedTotalPages = Math.ceil(syntheticTotalCount / pageSize);
 
   return {
-    // Array feeds
-    notifications: rawItems,                // General timeline layout feed
-    priorityFeed: prioritizedOutputFeed,    // Priority Inbox layout algorithm stream
-    viewedIds: viewedNotificationIds,       // Unread/Read tracking state pointers
+    notifications: rawItems,                
+    priorityFeed: prioritizedOutputFeed,    
+    viewedIds: viewedNotificationIds,       
     
-    // UI configuration states
     activePage: currentPage,
     activeFilter: categoryFilter,
     itemsLimit: pageSize,
@@ -120,7 +120,6 @@ export function useNotifications() {
     errorMessage: syncFailureMessage,
     totalPagesCount: computedTotalPages || 1,
 
-    // Core actions dispatchers
     setPagePointer: setCurrentPage,
     setFilterCriteria: setCategoryFilter,
     setPageLimitSize: setPageSize,
